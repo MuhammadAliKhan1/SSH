@@ -77,12 +77,89 @@ clean_ssh_config() {
     exit 0
 }
 
+# --- Fix Function ---
+fix_ssh_config() {
+    info "--- SSH Configuration Fix ---"
+    info "This will connect to your server to fix the 'authorizedkeysfile' setting."
+    
+    read -p "Enter the server's IP address: " REMOTE_HOST
+    if [ -z "$REMOTE_HOST" ]; then
+        error "Server IP address cannot be empty."
+    fi
+
+    read -p "Enter a username with sudo privileges for the connection: " CONNECT_USER
+    if [ -z "$CONNECT_USER" ]; then
+        error "The connecting user cannot be empty."
+    fi
+
+    FIX_COMMANDS="
+        echo '--- Applying SSH configuration fix ---';
+        # This command finds the line, comments it out if it exists, and adds the correct one.
+        sudo sed -i -E 's/^[# ]*AuthorizedKeysFile.*/# &/' /etc/ssh/sshd_config;
+        echo 'AuthorizedKeysFile .ssh/authorized_keys' | sudo tee -a /etc/ssh/sshd_config;
+        echo 'Restarting SSH service...';
+        sudo systemctl restart ssh;
+        echo '--- Fix applied successfully ---';
+    "
+    
+    info "Connecting to apply fix..."
+    ssh -t -o PubkeyAuthentication=no -o PreferredAuthentications=keyboard-interactive,password "${CONNECT_USER}@${REMOTE_HOST}" "$FIX_COMMANDS"
+
+    if [ $? -ne 0 ]; then
+        error "Failed to connect and apply the fix."
+    fi
+
+    info "The server configuration has been fixed. Please re-run the main setup script now."
+    exit 0
+}
+
+
+# --- Diagnostic Function ---
+diagnose_ssh_config() {
+    info "--- SSH Configuration Diagnostic ---"
+    info "This will connect to your server to read its active SSH configuration."
+    
+    read -p "Enter the server's IP address: " REMOTE_HOST
+    if [ -z "$REMOTE_HOST" ]; then
+        error "Server IP address cannot be empty."
+    fi
+
+    read -p "Enter a username with sudo privileges for the connection: " CONNECT_USER
+    if [ -z "$CONNECT_USER" ]; then
+        error "The connecting user cannot be empty."
+    fi
+
+    DIAGNOSTIC_COMMANDS="
+        echo '--- Active sshd_config settings ---';
+        sudo grep -E '^[a-zA-Z]' /etc/ssh/sshd_config;
+        echo;
+        echo '--- Effective runtime SSH settings (sshd -T) ---';
+        sudo sshd -T | grep -Ei 'passwordauthentication|permitrootlogin|pubkeyauthentication|authenticationmethods|authorizedkeysfile';
+    "
+    
+    info "Connecting to run diagnostics..."
+    ssh -t -o PubkeyAuthentication=no -o PreferredAuthentications=keyboard-interactive,password "${CONNECT_USER}@${REMOTE_HOST}" "$DIAGNOSTIC_COMMANDS"
+
+    if [ $? -ne 0 ]; then
+        error "Failed to connect and run diagnostics."
+    fi
+
+    info "Please copy the output above and provide it for analysis."
+    exit 0
+}
+
 
 # --- Main Script ---
 
-# Check for 'clean' argument
+# Check for 'clean', 'diagnose', or 'fix' argument
 if [ "$1" == "clean" ]; then
     clean_ssh_config
+fi
+if [ "$1" == "diagnose" ]; then
+    diagnose_ssh_config
+fi
+if [ "$1" == "fix" ]; then
+    fix_ssh_config
 fi
 
 clear
@@ -147,7 +224,7 @@ if [[ "$USER_CHOICE" == "new" ]]; then
         echo 'Firewall configured and enabled.';
     "
     info "Connecting as '${CONNECT_USER}@${REMOTE_HOST}' to create user and configure firewall."
-    ssh -t "${CONNECT_USER}@${REMOTE_HOST}" "$SETUP_COMMANDS"
+    ssh -t -o PubkeyAuthentication=no -o PreferredAuthentications=keyboard-interactive,password "${CONNECT_USER}@${REMOTE_HOST}" "$SETUP_COMMANDS"
 else
     info "--- Step 2: Configuring Firewall for Existing User ---"
     read -p "Enter the existing username to configure: " TARGET_USER
@@ -166,7 +243,7 @@ else
         echo 'Firewall configured and enabled.';
     "
     info "Connecting as '${CONNECT_USER}@${REMOTE_HOST}' to configure firewall."
-    ssh -t "${CONNECT_USER}@${REMOTE_HOST}" "$FIREWALL_COMMANDS"
+    ssh -t -o PubkeyAuthentication=no -o PreferredAuthentications=keyboard-interactive,password "${CONNECT_USER}@${REMOTE_HOST}" "$FIREWALL_COMMANDS"
 fi
 
 if [ $? -ne 0 ]; then
@@ -178,6 +255,9 @@ echo
 # --- Step 3: Create and Copy SSH Key ---
 info "--- Step 3: Setting Up SSH Key Authentication for '$TARGET_USER' ---"
 PUBLIC_KEY_PATH="$HOME/.ssh/id_rsa.pub"
+# Determine the corresponding private key path for use in the hardening step
+PRIVATE_KEY_PATH="${PUBLIC_KEY_PATH%.pub}"
+
 if [ ! -f "$PUBLIC_KEY_PATH" ]; then
     warning "No existing SSH key found. Generating a new one."
     ssh-keygen -t rsa -b 4096
@@ -190,7 +270,8 @@ fi
 
 info "Copying public key to '${TARGET_USER}@${REMOTE_HOST}'."
 info "You will be prompted for the password for '$TARGET_USER'."
-ssh-copy-id -i "$PUBLIC_KEY_PATH" "${TARGET_USER}@${REMOTE_HOST}"
+# We must also disable PubkeyAuthentication for ssh-copy-id to prevent the ssh-agent from interfering.
+ssh-copy-id -i "$PUBLIC_KEY_PATH" -o PubkeyAuthentication=no -o PreferredAuthentications=keyboard-interactive,password "${TARGET_USER}@${REMOTE_HOST}"
 if [ $? -ne 0 ]; then
     error "Failed to copy the SSH key. Please check the password for '$TARGET_USER' and try again."
 fi
@@ -205,17 +286,17 @@ PERMISSIONS_COMMAND="
     echo 'Permissions successfully enforced.';
 "
 # We connect using the TARGET_USER's password one last time to enforce permissions.
-ssh -t "${TARGET_USER}@${REMOTE_HOST}" "$PERMISSIONS_COMMAND"
+ssh -t -o PubkeyAuthentication=no -o PreferredAuthentications=keyboard-interactive,password "${TARGET_USER}@${REMOTE_HOST}" "$PERMISSIONS_COMMAND"
 if [ $? -ne 0 ]; then
     error "Failed to enforce permissions on the server. This may be a password or sudo issue."
 fi
 success "Server-side permissions have been secured."
 echo
 
-# --- Step 4: Test Connection ---
+# --- Step 4: Test Your Connection ---
 info "--- Step 4: Test Your Connection ---"
 warning "Please test your new key-based connection by running this command in a NEW terminal:"
-echo -e "  ${COLOR_GREEN}ssh ${TARGET_USER}@${REMOTE_HOST}${COLOR_NC}"
+echo -e "  ${COLOR_GREEN}ssh -i ${PRIVATE_KEY_PATH} -o IdentitiesOnly=yes ${TARGET_USER}@${REMOTE_HOST}${COLOR_NC}"
 info "If it works, you can proceed to the final step to harden SSH security."
 read -p "Press [Enter] after you have successfully tested the connection..."
 echo
@@ -243,8 +324,18 @@ HARDEN_COMMANDS="
     sudo sed -i 's/^[# ]*PasswordAuthentication .*/PasswordAuthentication no/' /etc/ssh/sshd_config;
     echo 'Restarting SSH service to apply changes...';
     sudo systemctl restart ssh;
+    # CRITICAL: Verify that the hardening was successful before disconnecting.
+    EFFECTIVE_AUTH=$(sudo sshd -T | grep -i '^passwordauthentication' | awk '{print $2}');
+    if [ "$EFFECTIVE_AUTH" != "no" ]; then
+        echo -e '\n\nCRITICAL ERROR: Hardening check failed. PasswordAuthentication is NOT disabled.';
+        echo 'Your server is still accepting passwords. Please investigate /etc/ssh/sshd_config manually.';
+        exit 1;
+    else
+        echo 'Hardening successfully verified.';
+    fi;
 "
-ssh -t "${TARGET_USER}@${REMOTE_HOST}" "$HARDEN_COMMANDS"
+# This connection MUST use the specific key to avoid agent issues, just like the manual test.
+ssh -t -i "$PRIVATE_KEY_PATH" -o IdentitiesOnly=yes "${TARGET_USER}@${REMOTE_HOST}" "$HARDEN_COMMANDS"
 
 if [ $? -eq 0 ]; then
     success "SSH security hardened successfully."
@@ -261,13 +352,13 @@ echo -e "${COLOR_YELLOW}--- What To Do Next? ---${COLOR_NC}"
 echo
 info "Your server is now secure. Here are some common next steps:"
 echo -e "1. ${COLOR_GREEN}Update your server's packages:${COLOR_NC}"
-echo "   ssh ${TARGET_USER}@${REMOTE_HOST} \"sudo apt update && sudo apt upgrade -y\""
+echo "   ssh -i ${PRIVATE_KEY_PATH} -o IdentitiesOnly=yes ${TARGET_USER}@${REMOTE_HOST} \"sudo apt update && sudo apt upgrade -y\""
 echo
 echo -e "2. ${COLOR_GREEN}Install a web server (like Nginx):${COLOR_NC}"
-echo "   ssh ${TARGET_USER}@${REMOTE_HOST} \"sudo apt install nginx -y\""
+echo "   ssh -i ${PRIVATE_KEY_PATH} -o IdentitiesOnly=yes ${TARGET_USER}@${REMOTE_HOST} \"sudo apt install nginx -y\""
 echo
 echo -e "3. ${COLOR_GREEN}Install Docker:${COLOR_NC}"
-echo "   ssh ${TARGET_USER}@${REMOTE_HOST} \"curl -fsSL https://get.docker.com -o get-docker.sh && sudo sh get-docker.sh\""
+echo "   ssh -i ${PRIVATE_KEY_PATH} -o IdentitiesOnly=yes ${TARGET_USER}@${REMOTE_HOST} \"curl -fsSL https://get.docker.com -o get-docker.sh && sudo sh get-docker.sh\""
 echo
-info "Remember to always connect using: ssh ${TARGET_USER}@${REMOTE_HOST}"
+info "Remember to always connect using: ssh -i ${PRIVATE_KEY_PATH} -o IdentitiesOnly=yes ${TARGET_USER}@${REMOTE_HOST}"
 echo 
