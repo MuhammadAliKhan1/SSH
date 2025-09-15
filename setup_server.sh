@@ -3,8 +3,7 @@
 # ==============================================================================
 # Script: setup_server.sh
 # Description: Automates the initial security setup for a new Ubuntu server.
-#              - Creates a new sudo user or configures an existing one.
-#              - Configures the UFW firewall.
+#              - Configures the UFW firewall for an existing sudo user.
 #              - Sets up SSH key-based authentication.
 #              - Disables root login and password authentication.
 # Author: Gemini
@@ -170,92 +169,46 @@ echo "======================================================"
 echo "      Initial Ubuntu Server Setup Script"
 echo "======================================================"
 echo
-info "This script will perform a secure initial setup of a new Ubuntu server."
-warning "You will need the server's IP address and the current 'root' password."
+info "This script will perform a secure initial setup of an Ubuntu server for an EXISTING sudo user."
+warning "You will need the server's IP address and the password for your user."
 echo
 read -p "Press [Enter] to begin..."
 
 # --- Step 1: Gather Initial Information ---
-info "--- Step 1: Gathering Server Information ---"
+info "--- Step 1: Gathering Server & User Information ---"
 read -p "Enter the server's IP address: " REMOTE_HOST
 if [ -z "$REMOTE_HOST" ]; then
     error "Server IP address cannot be empty."
 fi
 
-read -p "Enter the username for the initial connection (must have sudo privileges, e.g., root, ubuntu, ali): " CONNECT_USER
-if [ -z "$CONNECT_USER" ]; then
-    error "The connecting user cannot be empty."
+read -p "Enter your username on the server to configure (must have sudo privileges): " TARGET_USER
+if [ -z "$TARGET_USER" ]; then
+    error "Username cannot be empty."
 fi
 echo
 
-read -p "Do you want to create a new user or configure an existing one? (new/existing): " USER_CHOICE
-if [[ "$USER_CHOICE" != "new" && "$USER_CHOICE" != "existing" ]]; then
-    error "Invalid choice. Please enter 'new' or 'existing'."
-fi
-echo
-
-# --- Step 2: User Setup and Firewall Configuration ---
-if [[ "$USER_CHOICE" == "new" ]]; then
-    info "--- Step 2: Creating New User and Configuring Firewall ---"
-    read -p "Enter the new username to create on the server: " TARGET_USER
-    if [ -z "$TARGET_USER" ]; then
-        error "New username cannot be empty."
-    fi
-
-    info "You will now be prompted to create a password for the new user '$TARGET_USER'."
-    read -s -p "Enter a secure password for $TARGET_USER: " NEW_USER_PASSWORD
-    echo
-    read -s -p "Confirm password: " NEW_USER_PASSWORD_CONFIRM
-    echo
-    if [ "$NEW_USER_PASSWORD" != "$NEW_USER_PASSWORD_CONFIRM" ]; then
-        error "Passwords do not match."
-    fi
-    ENCRYPTED_PASSWORD=$(openssl passwd -1 "$NEW_USER_PASSWORD")
-    
-    # Construct the command string to be executed remotely.
-    # This avoids TTY issues with here-documents.
-    SETUP_COMMANDS="
-        sudo useradd -m -p '$ENCRYPTED_PASSWORD' -s /bin/bash '$TARGET_USER';
-        sudo usermod -aG sudo '$TARGET_USER';
-        echo 'User ''$TARGET_USER'' created and added to sudo group.';
-        echo 'Configuring UFW firewall...';
-        sudo ufw allow OpenSSH;
-        sudo ufw allow http;
-        sudo ufw allow https;
-        yes | sudo ufw enable;
-        sudo ufw status;
-        echo 'Firewall configured and enabled.';
-    "
-    info "Connecting as '${CONNECT_USER}@${REMOTE_HOST}' to create user and configure firewall."
-    ssh -t -o PubkeyAuthentication=no -o PreferredAuthentications=keyboard-interactive,password "${CONNECT_USER}@${REMOTE_HOST}" "$SETUP_COMMANDS"
-else
-    info "--- Step 2: Configuring Firewall for Existing User ---"
-    read -p "Enter the existing username to configure: " TARGET_USER
-    if [ -z "$TARGET_USER" ]; then
-        error "Existing username cannot be empty."
-    fi
-
-    # Construct the command string to be executed remotely.
-    FIREWALL_COMMANDS="
-        echo 'Configuring UFW firewall...';
-        sudo ufw allow OpenSSH;
-        sudo ufw allow http;
-        sudo ufw allow https;
-        yes | sudo ufw enable;
-        sudo ufw status;
-        echo 'Firewall configured and enabled.';
-    "
-    info "Connecting as '${CONNECT_USER}@${REMOTE_HOST}' to configure firewall."
-    ssh -t -o PubkeyAuthentication=no -o PreferredAuthentications=keyboard-interactive,password "${CONNECT_USER}@${REMOTE_HOST}" "$FIREWALL_COMMANDS"
-fi
+# --- Step 2: Configure Firewall ---
+info "--- Step 2: Configuring Firewall for user '$TARGET_USER' ---"
+# Construct the command string to be executed remotely.
+FIREWALL_COMMANDS="
+    echo 'Configuring UFW firewall...';
+    sudo ufw allow OpenSSH;
+    sudo ufw allow http;
+    sudo ufw allow https;
+    yes | sudo ufw enable;
+    sudo ufw status;
+    echo 'Firewall configured and enabled.';
+"
+info "Connecting as '${TARGET_USER}@${REMOTE_HOST}' to configure firewall."
+ssh -t -o PubkeyAuthentication=no -o PreferredAuthentications=keyboard-interactive,password "${TARGET_USER}@${REMOTE_HOST}" "$FIREWALL_COMMANDS"
 
 if [ $? -ne 0 ]; then
-    error "Failed to perform server setup. Please check the root password and connection."
+    error "Failed to connect to the server to configure the firewall. Please check the user, password, and connection."
 fi
 success "Server configuration complete."
 echo
 
-# --- Step 3: Create and Copy SSH Key ---
+# --- Step 3: Setting Up SSH Key Authentication for '$TARGET_USER' ---
 info "--- Step 3: Setting Up SSH Key Authentication for '$TARGET_USER' ---"
 PUBLIC_KEY_PATH="$HOME/.ssh/id_rsa.pub"
 # Determine the corresponding private key path for use in the hardening step
@@ -296,16 +249,32 @@ fi
 success "Server-side permissions have been secured."
 echo
 
-# --- Step 4: Test Your Connection ---
-info "--- Step 4: Test Your Connection ---"
+# --- Step 4: Verify Key Installation ---
+info "--- Step 4: Verifying Key Installation ---"
+LOCAL_PUB_KEY=$(cat "${PUBLIC_KEY_PATH}")
+# Connect with password to read the remote key file
+# We capture all output and then check it. The remote command may produce extra lines.
+REMOTE_OUTPUT=$(ssh -t -o PubkeyAuthentication=no -o PreferredAuthentications=keyboard-interactive,password "${TARGET_USER}@${REMOTE_HOST}" "cat ~/.ssh/authorized_keys" 2>/dev/null)
+
+# Check if the local key is present anywhere within the remote output.
+if [[ "$REMOTE_OUTPUT" != *"$LOCAL_PUB_KEY"* ]]; then
+    error "CRITICAL: Key verification failed. The key on the server does not match the local key. Aborting before hardening to prevent lockout."
+else
+    success "Key successfully verified on the remote server."
+fi
+echo
+
+
+# --- Step 5: Test Your Connection ---
+info "--- Step 5: Test Your Connection ---"
 warning "Please test your new key-based connection by running this command in a NEW terminal:"
 echo -e "  ${COLOR_GREEN}ssh -i ${PRIVATE_KEY_PATH} -o IdentitiesOnly=yes ${TARGET_USER}@${REMOTE_HOST}${COLOR_NC}"
 info "If it works, you can proceed to the final step to harden SSH security."
 read -p "Press [Enter] after you have successfully tested the connection..."
 echo
 
-# --- Step 5: Harden SSH Security ---
-info "--- Step 5: Harden SSH Security (Disable Root Login & Password Auth) ---"
+# --- Step 6: Harden SSH Security ---
+info "--- Step 6: Harden SSH Security (Disable Root Login & Password Auth) ---"
 warning "This final step will disable root login and password-based authentication."
 warning "DO NOT PROCEED unless you have successfully logged in with your SSH key."
 read -p "Are you sure you want to proceed? (y/n) " -n 1 -r
@@ -329,7 +298,7 @@ HARDEN_COMMANDS="
     sudo systemctl restart ssh;
     # CRITICAL: Verify that the hardening was successful before disconnecting.
     EFFECTIVE_AUTH=$(sudo sshd -T | grep -i '^passwordauthentication' | awk '{print $2}');
-    if [ "$EFFECTIVE_AUTH" != "no" ]; then
+    if [ "x$EFFECTIVE_AUTH" != "xno" ]; then
         echo -e '\n\nCRITICAL ERROR: Hardening check failed. PasswordAuthentication is NOT disabled.';
         echo 'Your server is still accepting passwords. Please investigate /etc/ssh/sshd_config manually.';
         exit 1;

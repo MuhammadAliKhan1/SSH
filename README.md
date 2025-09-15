@@ -4,22 +4,22 @@ This script automates the essential security and configuration steps for a new U
 
 ## Features
 
-This script will guide you through the following steps:
+This script will guide you through the following steps for an **existing user with sudo privileges**:
 
-1.  **Create a New Sudo User**: Connects to the server as `root` to create a new user account with administrative (`sudo`) privileges. It is a security best practice to disable root login and use a personal sudo user for server administration.
-2.  **Configure UFW Firewall**: Sets up the Uncomplicated Firewall (UFW) to block all incoming connections by default and only allow specific services. It automatically enables rules for `OpenSSH` (port 22), `HTTP` (port 80), and `HTTPS` (port 443).
-3.  **Set Up SSH Key-Based Authentication**:
-    *   Generates a new 4096-bit RSA key pair on your local machine if you don't have one.
-    *   Copies your public key to the newly created user on the remote server, enabling secure, passwordless logins.
-4.  **Harden SSH Security**:
-    *   Disables direct root login (`PermitRootLogin no`) to prevent attackers from targeting the `root` account.
-    *   Disables password-based authentication (`PasswordAuthentication no`), forcing the use of more secure SSH keys.
+1.  **Configure UFW Firewall**: Sets up the Uncomplicated Firewall (UFW) to allow SSH, HTTP, and HTTPS traffic.
+2.  **Set Up SSH Key-Based Authentication**:
+    *   Generates a new 4096-bit RSA key pair on your local machine if one doesn't exist.
+    *   Copies your public key to the user on the remote server, enabling secure, passwordless logins.
+3.  **Harden SSH Security**:
+    *   Disables direct root login (`PermitRootLogin no`).
+    *   Disables password-based authentication (`PasswordAuthentication no`), forcing all connections to use SSH keys.
 
 ## Prerequisites
 
--   A new, publicly accessible Ubuntu server (tested on 20.04/22.04).
+-   An Ubuntu server (tested on 20.04/22.04).
 -   The IP address of the server.
--   The `root` password for the server. The script requires root access for the initial setup.
+-   A pre-existing user account on the server with `sudo` (administrative) privileges.
+-   The password for that user account.
 
 ## How to Use
 
@@ -39,12 +39,11 @@ This script will guide you through the following steps:
     ```
 
 4.  **Follow the Prompts**:
-    The script is interactive and will prompt you for necessary information at each step:
+    The script is interactive and will prompt you for necessary information:
     *   The server's IP address.
-    *   The new username you want to create.
-    *   A secure password for the new user.
+    *   Your username on the server.
 
-    It will also ask for the `root` password and the new user's password when connecting to the server to perform administrative tasks.
+    It will then ask for your user's password to connect and run the necessary `sudo` commands.
 
 ## Security Warning
 
