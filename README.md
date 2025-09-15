@@ -94,6 +94,10 @@ For a much easier and more organized way to connect, you can add an entry to you
         # The path to your private key
         IdentityFile ~/.ssh/id_rsa
 
+        # CRITICAL for users with many keys in an SSH Agent
+        # This forces SSH to use only the key specified above.
+        IdentitiesOnly yes
+
         # (Optional) Specify the port if it's not the default 22
         # Port 22
     ```
@@ -110,6 +114,20 @@ And when using a remote SSH extension in VS Code or Cursor, you can simply tell 
 ## Troubleshooting
 
 Here are solutions to common issues you might encounter.
+
+### Error: `Too many authentication failures` When Connecting Manually
+
+If the script succeeds but you cannot connect with a simple `ssh user@host` command, it is almost always because you have an SSH Agent running with multiple keys. The server sees these as multiple failed login attempts and disconnects you.
+
+**Solution:**
+You must be explicit in your connection command or your `~/.ssh/config` file.
+
+1.  **Command Line**: Use the `IdentitiesOnly=yes` option to force SSH to use only the key you specify.
+    ```bash
+    ssh -i /path/to/your/private_key -o IdentitiesOnly=yes user@host
+    ```
+
+2.  **SSH Config (Recommended)**: Add `IdentitiesOnly yes` to the host entry in your `~/.ssh/config` file. See the example in the "Connecting to Your Server" section above.
 
 ### Error: `Permission denied (publickey)`
 

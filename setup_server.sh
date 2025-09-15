@@ -94,9 +94,12 @@ fix_ssh_config() {
 
     FIX_COMMANDS="
         echo '--- Applying SSH configuration fix ---';
-        # This command finds the line, comments it out if it exists, and adds the correct one.
+        # This command finds the 'AuthorizedKeysFile' line, comments it out if it exists, and adds the correct one.
         sudo sed -i -E 's/^[# ]*AuthorizedKeysFile.*/# &/' /etc/ssh/sshd_config;
         echo 'AuthorizedKeysFile .ssh/authorized_keys' | sudo tee -a /etc/ssh/sshd_config;
+        # This command comments out the AcceptEnv line to prevent local user env from confusing remote sudo.
+        echo 'Disabling AcceptEnv to prevent sudo prompt issues...';
+        sudo sed -i -E 's/^[# ]*AcceptEnv LANG LC_\*/# &/' /etc/ssh/sshd_config;
         echo 'Restarting SSH service...';
         sudo systemctl restart ssh;
         echo '--- Fix applied successfully ---';
@@ -334,8 +337,8 @@ HARDEN_COMMANDS="
         echo 'Hardening successfully verified.';
     fi;
 "
-# This connection MUST use the specific key to avoid agent issues, just like the manual test.
-ssh -t -i "$PRIVATE_KEY_PATH" -o IdentitiesOnly=yes "${TARGET_USER}@${REMOTE_HOST}" "$HARDEN_COMMANDS"
+# This connection MUST use the specific key and we block leaking the local username to prevent sudo confusion.
+ssh -t -i "$PRIVATE_KEY_PATH" -o IdentitiesOnly=yes -o "SendEnv=-USER,-LOGNAME" "${TARGET_USER}@${REMOTE_HOST}" "$HARDEN_COMMANDS"
 
 if [ $? -eq 0 ]; then
     success "SSH security hardened successfully."
