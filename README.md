@@ -110,6 +110,74 @@ ssh YourVMAlias
 
 And when using a remote SSH extension in VS Code or Cursor, you can simply tell it to connect to the host `YourVMAlias`.
 
+### Connecting with a Password (For Remote Development)
+
+If key-based authentication is failing and you need to connect to your server to work or troubleshoot, you can use this configuration. It will force the SSH client to use password authentication.
+
+Add the following to your `~/.ssh/config` file:
+
+```ini
+# A memorable name for your VM connection (Password Auth)
+Host YourVMAlias-password
+
+    # The IP address of your server
+    HostName your_server_ip
+
+    # The user you created on the server
+    User your_user
+
+    # Force password-based authentication methods
+    PubkeyAuthentication no
+    PreferredAuthentications keyboard-interactive,password
+```
+
+You can then connect in your terminal with `ssh YourVMAlias-password` or use the host `YourVMAlias-password` in your remote SSH extension.
+
+## Manual Setup Guide
+
+If the script fails, you can perform the steps manually. This guide assumes you can connect to your server with a password.
+
+1.  **Generate a Key (Local Machine)**:
+    If you don't have one, create an SSH key on your local computer.
+    ```bash
+    ssh-keygen -t rsa -b 4096
+    ```
+
+2.  **Copy the Key to the Server (Local Machine)**:
+    Use `ssh-copy-id` to securely transfer your public key.
+    ```bash
+    ssh-copy-id your_user@your_server_ip
+    ```
+
+3.  **Fix Permissions (On the Server)**:
+    SSH into your server with your password and run these commands to ensure the permissions are correct. This is the most common point of failure.
+    ```bash
+    # Run these commands ON THE SERVER
+    chmod go-w ~
+    chmod 700 ~/.ssh
+    chmod 600 ~/.ssh/authorized_keys
+    ```
+
+4.  **Test the Key (Local Machine)**:
+    Open a **new terminal** and try to connect using only your key. If it connects without asking for a password, you have succeeded.
+    ```bash
+    ssh -i ~/.ssh/id_rsa -o IdentitiesOnly=yes your_user@your_server_ip
+    ```
+
+5.  **Harden the Server (On the Server)**:
+    Once you have confirmed your key works, SSH into your server one last time and disable password logins.
+    ```bash
+    # Run these commands ON THE SERVER
+    sudo nano /etc/ssh/sshd_config
+
+    # Find and change these lines to 'no':
+    # PermitRootLogin no
+    # PasswordAuthentication no
+
+    # Save the file (CTRL+X, Y, Enter) and restart the SSH service:
+    sudo systemctl restart ssh
+    ```
+
 ## Troubleshooting
 
 Here are solutions to common issues you might encounter.

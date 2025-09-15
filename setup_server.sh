@@ -291,9 +291,15 @@ HARDEN_COMMANDS="
     echo 'Backing up sshd_config to /etc/ssh/sshd_config.bak';
     sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak;
     echo 'Disabling root login...';
-    sudo sed -i 's/^PermitRootLogin .*/PermitRootLogin no/' /etc/ssh/sshd_config;
+    # Comment out all existing PermitRootLogin lines
+    sudo sed -i -E 's/^[# ]*PermitRootLogin.*/# &/' /etc/ssh/sshd_config;
+    # Add the definitive setting to the end of the file
+    echo 'PermitRootLogin no' | sudo tee -a /etc/ssh/sshd_config;
     echo 'Disabling password authentication...';
-    sudo sed -i 's/^[# ]*PasswordAuthentication .*/PasswordAuthentication no/' /etc/ssh/sshd_config;
+    # Comment out all existing PasswordAuthentication lines
+    sudo sed -i -E 's/^[# ]*PasswordAuthentication.*/# &/' /etc/ssh/sshd_config;
+    # Add the definitive setting to the end of the file
+    echo 'PasswordAuthentication no' | sudo tee -a /etc/ssh/sshd_config;
     echo 'Restarting SSH service to apply changes...';
     sudo systemctl restart ssh;
     # CRITICAL: Verify that the hardening was successful before disconnecting.
