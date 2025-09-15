@@ -39,6 +39,7 @@ error() {
 clean_ssh_config() {
     info "--- SSH Configuration Cleanup ---"
     warning "This will reset the SSH server configuration to allow password-based logins for all users, including root."
+    warning "It will also DELETE the authorized_keys file for the user running the command to remove all existing SSH key access."
     read -p "Are you sure you want to proceed? (y/n) " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -50,7 +51,21 @@ clean_ssh_config() {
         error "This cleanup operation must be run with sudo. e.g., 'sudo ./setup_server.sh clean'"
     fi
 
-    info "Re-enabling password and root login..."
+    if [ -z "$SUDO_USER" ]; then
+        error "Could not determine the user who ran sudo. Please run as a non-root user: 'sudo ./setup_server.sh clean'"
+    fi
+
+    info "Removing existing SSH keys for user '$SUDO_USER'..."
+    # Get the home directory of the user who invoked sudo, which is more reliable than ~
+    SUDO_USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+    if [ -f "${SUDO_USER_HOME}/.ssh/authorized_keys" ]; then
+        rm -f "${SUDO_USER_HOME}/.ssh/authorized_keys"
+        success "Successfully removed ${SUDO_USER_HOME}/.ssh/authorized_keys"
+    else
+        info "No authorized_keys file found for user '$SUDO_USER' to remove."
+    fi
+
+    info "Re-enabling password and root login in sshd_config..."
     # Use sed to uncomment and set the values to 'yes'
     sed -i -E 's/^[# ]*(PermitRootLogin|PasswordAuthentication).*/\1 yes/' /etc/ssh/sshd_config
 
@@ -58,7 +73,7 @@ clean_ssh_config() {
     systemctl restart ssh
 
     success "SSH configuration has been reset."
-    info "The server will now accept password-based logins."
+    info "The server will now accept password-based logins and has no configured SSH keys for '$SUDO_USER'."
     exit 0
 }
 
@@ -180,6 +195,21 @@ if [ $? -ne 0 ]; then
     error "Failed to copy the SSH key. Please check the password for '$TARGET_USER' and try again."
 fi
 success "SSH key copied successfully."
+
+info "Enforcing correct file permissions on the server to prevent key rejection..."
+PERMISSIONS_COMMAND="
+    echo 'Setting strict permissions for home directory, .ssh, and authorized_keys...';
+    chmod go-w ~;
+    chmod 700 ~/.ssh;
+    chmod 600 ~/.ssh/authorized_keys;
+    echo 'Permissions successfully enforced.';
+"
+# We connect using the TARGET_USER's password one last time to enforce permissions.
+ssh -t "${TARGET_USER}@${REMOTE_HOST}" "$PERMISSIONS_COMMAND"
+if [ $? -ne 0 ]; then
+    error "Failed to enforce permissions on the server. This may be a password or sudo issue."
+fi
+success "Server-side permissions have been secured."
 echo
 
 # --- Step 4: Test Connection ---
